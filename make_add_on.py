@@ -136,13 +136,13 @@ def config_to_data(config_file):
 
     vars_idx = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# vars")][0]
     ops_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# ops")][0]
+    shct_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# shortcuts")][0]
 
     vars_lines = [ var for var in libs[vars_idx + 1:ops_idx][0] if var ]
-    ops_lines =  [ op for op in libs[ops_idx + 1:][0] if op ]
+    ops_lines  = [ op for op in libs[ops_idx + 1:shct_idx][0] if op ]
+    shct_lines = [ op for op in libs[shct_idx + 1:][0] if op ]
 
-    pp.pprint(libs)
-    pp.pprint(vars_lines)
-    pp.pprint(ops_lines)
+    print(shct_lines)
     
     addon = {
         "properties": [ line_to_property(var, prop_types) for var in vars_lines if var],
@@ -156,11 +156,7 @@ def config_to_data(config_file):
         for op in list(mod.items())[0][1]:
             addon["operators"].append(op["name"])
 
-    # print(list(line_to_panel_item(op, addon["properties"]) for op in libs if op))
     addon["panel"] = list(line_to_panel_item(op, addon["properties"]) for op in ops_lines if op)
-    # addon["panel"] =     [ line_to_panel_item(op, addon["properties"]) for op in libs[ops_idx + 1:][0] if op ],
-    # addon["imports"] =   [ next(iter(mod.items()))[0] for mod in addon["modules"] ],
-    # addon["operators"] = [ op["name"] for op in list(chain.from_iterable([ next(iter(mod.items()))[1] for mod in addon["modules"] ])) ]
     return addon
 
 
