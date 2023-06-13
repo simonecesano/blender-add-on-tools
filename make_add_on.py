@@ -143,8 +143,8 @@ def config_to_data(config_file):
 
     libs = [ g for g in [ list(group) for key, group in groupby(lines, lambda op: op.startswith("# ")) ] ]
  
-    vars_idx = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# vars")][0]
-    ops_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# ops")][0]
+    vars_idx = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# properties")][0]
+    ops_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# panel")][0]
     shct_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# shortcuts")][0]
 
     vars_lines = [ var for var in libs[vars_idx + 1:ops_idx][0] if var ]
