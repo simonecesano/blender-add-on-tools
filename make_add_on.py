@@ -5,6 +5,7 @@ import argparse
 import pprint
 import datetime
 import zipfile
+import json
 
 from itertools import groupby, chain
 from jinja2 import Template, Environment
@@ -32,6 +33,17 @@ prop_types = [
     'RemoveProperty',
     'StringProperty'
 ]
+def indexes(items, flt):
+    if isinstance(flt, type(re.compile(''))):
+        return [ i for i, o in enumerate(items) if re.findall(flt, o) ]
+    elif isinstance(flt, type(lambda: None)):
+        return [ i for i, o in enumerate(items) if flt(o) ]
+    else:
+        return [ i for i, o in enumerate(items) if flt == o ]
+
+def first_idx(items, filter):
+    idxs = indexes(items, filter)
+    return idxs[0] if idxs else None
 
 def camel_to_snake(name):
     name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
@@ -126,14 +138,11 @@ if args.pack:
 # Reading and parsing
 # ================================================
 
-pp = pprint.PrettyPrinter(indent=4)
-
-
 def config_to_data(config_file):
     with open(config_file, "r") as file: lines = [ l.strip() for l in file.readlines() if l.strip() ]
 
     libs = [ g for g in [ list(group) for key, group in groupby(lines, lambda op: op.startswith("# ")) ] ]
-
+ 
     vars_idx = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# vars")][0]
     ops_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# ops")][0]
     shct_idx  = [ i for i, o in enumerate(libs) if o[0].lower().startswith("# shortcuts")][0]
@@ -141,8 +150,6 @@ def config_to_data(config_file):
     vars_lines = [ var for var in libs[vars_idx + 1:ops_idx][0] if var ]
     ops_lines  = [ op for op in libs[ops_idx + 1:shct_idx][0] if op ]
     shct_lines = [ op for op in libs[shct_idx + 1:][0] if op ]
-
-    print(shct_lines)
     
     addon = {
         "properties": [ line_to_property(var, prop_types) for var in vars_lines if var],
@@ -150,11 +157,16 @@ def config_to_data(config_file):
         "operators":  [],
         "panel": [],
         "imports": [],
+        "shortcuts": shct_lines
     }
+    
     for mod in addon["modules"]:
         addon["imports"].append(list(mod.items())[0][0])
         for op in list(mod.items())[0][1]:
-            addon["operators"].append(op["name"])
+            op_is_a_var = op["name"] in [ var["id"] for var in addon["properties"] ] \
+                or op["label"].lower() in [ var["name"].lower() for var in addon["properties"] ]
+            if not op_is_a_var:
+                addon["operators"].append(op["name"])
 
     addon["panel"] = list(line_to_panel_item(op, addon["properties"]) for op in ops_lines if op)
     return addon
@@ -167,24 +179,9 @@ def create_add_on(templates, addon, mod_name):
         with open(os.path.join(mod_name, name + ".py"), "w") as file:
             file.write(Template(templates["operator"]).render(operators=ops, name=mod_name))
 
-    with open(os.path.join(mod_name, "Properties.py"), "w") as file:
-        file.write(Template(templates["properties"]).render(properties=addon["properties"], name=mod_name))
-
-    with open(os.path.join(mod_name, "Modal.py"), "w") as file:
-        file.write(Template(templates["modal"]).render(properties=addon["properties"], name=mod_name))
-        
-    with open(os.path.join(mod_name, "Panel.py"), "w") as file:
-        file.write(Template(templates["panel"]).render(items=addon["panel"], \
-                                                       name=mod_name, \
-                                                       modules=addon["imports"], \
-                                                       operators=addon["operators"]))
-
-    with open(os.path.join(mod_name, "__init__.py"), "w") as file:
-        file.write(Template(templates["init"]).render(items=addon["panel"], \
-                                                       name=mod_name, \
-                                                       modules=addon["imports"], \
-                                                       operators=addon["operators"]))
-
+    for mod_file in ["Properties", "Modal", "Panel", "__init__"]:
+        with open(os.path.join(mod_name, mod_file + ".py"), "w") as file:
+            file.write(Template(templates[mod_file.lower()]).render(addon=addon, name=mod_name))
 
 
 # ================================================
@@ -195,8 +192,9 @@ addon = config_to_data(args.file)
 
 if args.dump:
     import json
-    pp = pprint.PrettyPrinter(indent=4)
-    pp.pprint(addon)
+    # pp = pprint.PrettyPrinter(indent=4)
+    # pp.pprint(addon)
+    print(json.dumps(addon, indent=4))
     exit()
 
 
@@ -205,9 +203,9 @@ create_add_on(templates, addon, args.name)
         
 # --------------------------------------------------------------
 # TODO
-# - add __init__.py template
 # - make all templates dependent on addon def and name only
-# - add modal
+# - add shortcuts configuration
+# - check something weird with operators (more added than necessary)
 # --------------------------------------------------------------
 
 # ================================================
@@ -218,7 +216,7 @@ properties='''
 import bpy
 
 class {{ name }}Properties(bpy.types.PropertyGroup):
-{%- for prop in properties %}
+{%- for prop in addon["properties"] %}
     {{ prop.id }}: bpy.props.{{ prop.type }}(
         name="{{ prop.name }}",
         description="{{ prop.description }}",
@@ -230,7 +228,7 @@ class {{ name }}Properties(bpy.types.PropertyGroup):
 panel='''
 import bpy
 
-{%- for mod in modules %}
+{%- for mod in addon["imports"] %}
 from . {{ mod }} import * 
 {%- endfor %}
 from . Properties import {{ name }}Properties
@@ -244,7 +242,7 @@ class {{ name }}Panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        {%- for op in items %}
+        {%- for op in addon["panel"] %}
         {% if op.type == "separator" -%}
         layout.separator()
         {% elif op.type == "label" -%}
@@ -318,13 +316,13 @@ class {{ name }}ModalOperator(bpy.types.Operator):
         if event.type == 'ESC':
             return {'PASS_THROUGH'}
         elif event.type in self.letters and event.value == "PRESS":
-            print(event.type, event.ctrl, event.shift, event.alt, event.oskey, area.type)
+            print(__name__, event.type, event.ctrl, event.shift, event.alt, event.oskey, area.type)
         elif event.type in self.numbers and event.value == "PRESS":        
-            print(event.type, event.ctrl, event.shift, event.alt, event.oskey, area.type)
+            print(__name__, event.type, event.ctrl, event.shift, event.alt, event.oskey, area.type)
         elif event.type in self.arrows  and event.value == "PRESS":
-            print(event.type, event.ctrl, event.shift, event.alt, event.oskey, area.type)
+            print(__name__, event.type, event.ctrl, event.shift, event.alt, event.oskey, area.type)
         elif event.type in self.mouse   and event.value == "PRESS":
-            print(event.type, event.ctrl, event.shift, event.alt, event.oskey, is_inside)
+            print(__name__, event.type, event.ctrl, event.shift, event.alt, event.oskey, is_inside)
         return {'PASS_THROUGH'}
 
     def invoke(self, context, event):
@@ -346,13 +344,13 @@ if __name__ == "__main__":
     register()
 '''
 
-init = '''
+__init__ = '''
 import bpy
 import os
 import sys
 
 from importlib import reload
-
+{% set operators = addon["operators"] %}
 bl_info = {
     "name": "{{ name }}",
     "author": "simone cesano",
@@ -363,7 +361,6 @@ bl_info = {
     "warning": "",
     "category": "Material",
 }
-
 
 from . Panel import *
 from . Properties import *
@@ -380,7 +377,6 @@ class_list = (
     {{ name.upper() }}_OP_{{ op }},
     {%- endfor %}
 )
-
 
 def register():
     for cls in class_list:
