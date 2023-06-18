@@ -12,11 +12,15 @@ from jinja2 import Template, Environment
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--name", "-n", type=str)
+parser.add_argument('name', help='The name of the addon')
+parser.add_argument('addon_config_file', nargs='?', help='The path to the config file')
+
+parser.add_argument("--update", "-u", action='store_true', help='Update files even if they exist')
 parser.add_argument("--dump", "-d", action='store_true', help='Dump module definition and exit')
 parser.add_argument("--pack", "-p", action='store_true', help='Pack module into zip file')
-parser.add_argument("--link", "-l", type=str, help='Link module folder to target folder (ideally the Blender add-ons folder')
-parser.add_argument('file', nargs='?')
+parser.add_argument("--link", "-l", type=str, help='Link module folder to target folder (ideally the Blender add-ons folder)')
+
+parser.add_argument("--verbose", "-v", action='store_true', help='Print more messages')
 
 args = parser.parse_args()
 
@@ -57,6 +61,20 @@ def camel_to_snake(name):
 def name_to_camel(name):
     return re.sub(r"\s+", "_", name).lower()
 
+def compress_files(directory, version=None, extensions=['.py', '.blend', '.svg']):
+    if not version:
+        for root, dirs, files in os.walk(directory):
+            version = datetime.datetime.fromtimestamp(max(os.path.getmtime(os.path.join(root, f)) for f in files)).strftime('%Y%m%d%H%M%S')
+    zip_filename = "{}-{}.zip".format(directory, version)
+
+    with zipfile.ZipFile(zip_filename, 'w') as zipf:
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    file_path = os.path.join(root, file)
+                    zipf.write(file_path, file_path)
+    return zip_filename
+
 def line_to_property(line, prop_types):
     defaults = ["", "string", ""]
     line, description = re.split(r'\s*\#\s*', line) if re.search(r'\s*\#\s*', line) else (line, "")
@@ -79,11 +97,38 @@ def line_to_panel_item(op, addon_vars):
     else:                           return { "name": name_to_camel(op), "type": "operator", "text": op }
 
 
+    
+def line_to_shortcut(line):
+    items = [ i.lower() for i in re.split(r'\s*\-\s*', line) ][::-1]
+    shortcut = { "line": line }
+    modifiers = [ "shift", "alt", "ctrl", "oskey" ]
+    numbers = [ "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE" ]
+    for i in items:
+        if i in modifiers:
+            shortcut[i] = True
+        elif re.match(r'^[a-z]$', i):
+            shortcut["type"] = '"{}"'.format(i.upper())
+        elif re.match(r'^[0-9]$', i):
+            shortcut["type"] = '"{}"'.format(numbers[int(i)])
+        elif re.match(r'^[a-z_]+$', i):
+            shortcut["type"] = '"{}"'.format(i.upper())
+        else:
+            shortcut["ascii"] = '"{}"'.format(i)
+
+    shortcut["template"] = " and ".join([ 'event.{} == {}'.format(t, v) for t, v in shortcut.items() if not t == "line"])
+    shortcut["template"] = shortcut["template"] + " # " + shortcut["line"]
+    return shortcut
+    
+
 def file_to_addon_conf(file_path):
     with open(file_path, "r") as file: lines = [ l.strip() for l in file.readlines() if l.strip() ]
 
+    comment_re = re.compile(r'\s*%%.+')
     block_re = re.compile(r'^# ')
     module_re = re.compile(r'^## |\-{2,} *')
+
+    lines = [ comment_re.sub("", l) for l in lines ]
+    lines = [ l for l in lines if l ]
 
     idx = indexes(lines, block_re, and_last=True)
     addon = {}
@@ -106,6 +151,9 @@ def file_to_addon_conf(file_path):
         for op in mod[1]: addon["operators"].append(op["name"])
         addon["imports"].append(mod[0])
 
+    addon["shortcuts"] = [ line_to_shortcut(l) for l in addon["shortcuts"] ]
+    
+        
     addon["panel"]      = [ line_to_panel_item(p, addon["properties"]) for p in addon["panel"] ] 
     return addon
 
@@ -120,30 +168,50 @@ def read_templates():
             exec("".join(source_code[start_index:]), {}, templates)
     return { key: value.strip('\n') for key, value in templates.items() }
 
-def create_add_on(templates, addon, mod_name):
-    if not os.path.isdir(mod_name): os.mkdir(mod_name)
+def compile_template(template_source, output_file, update=False, **vars):
+    source = Template(template_source).render(**vars)
+    if update or not os.path.exists(output_file):
+        with open(output_file, "w") as file: file.write(source)
+    else:
+        with open(output_file, 'r') as file:
+            prev_source = file.read()
+            if prev_source != source: print("File {} exists - use update option to overwrite".format(output_file), file=sys.stderr)
+    return source
+
+def create_add_on(templates, addon, args):
+    if args.verbose: print("Creating module {}".format(args.name), file=sys.stderr)
+
+    if not os.path.isdir(args.name):
+        os.mkdir(args.name)
+        if args.verbose: print("Creating folder {}".format(args.name), file=sys.stderr)
+
     for mod in addon["modules"]:
         name, ops = mod
-        with open(os.path.join(mod_name, name + ".py"), "w") as file:
-            file.write(Template(templates["operator"]).render(operators=ops, name=mod_name))
+        file_path = os.path.join(args.name, name + ".py")
+        if args.verbose: print("Creating file {}".format(file_path), file=sys.stderr)
+        compile_template(templates["operator"], file_path, update=args.update, operators=ops, name=args.name)
 
     for mod_file in ["Properties", "Modal", "Panel", "__init__"]:
-        with open(os.path.join(mod_name, mod_file + ".py"), "w") as file:
-            file.write(Template(templates[mod_file.lower()]).render(addon=addon, name=mod_name))
-
+        file_path = os.path.join(args.name, mod_file + ".py")
+        if args.verbose: print("Creating file {}".format(file_path), file=sys.stderr)
+        compile_template(templates[mod_file.lower()], file_path, update=args.update, addon=addon, name=args.name)
 
  
 if args.link:
     source_folder = os.path.abspath(args.name)
     target_folder = os.path.abspath(os.path.join(args.link, args.name))
     os.symlink(source_folder, target_folder)    
+
+    if args.verbose: print("Created link to {} in {}".format(source_folder, target_folder), file=sys.stderr)
     exit()
     
 if args.pack:
-    compress_files(args.name)
+    zipfile = compress_files(args.name)
+    if args.verbose: print("Created add-on {}".format(zipfile), file=sys.stderr)
+    
     exit()
 
-addon = file_to_addon_conf(args.file)
+addon = file_to_addon_conf(args.addon_config_file)
     
 if args.dump:
     import json
@@ -152,9 +220,8 @@ if args.dump:
     print(json.dumps(addon, indent=4))
     exit()
 
-
 templates = read_templates()
-create_add_on(templates, addon, args.name)
+create_add_on(templates, addon, args)
 
 
 # ================================================
