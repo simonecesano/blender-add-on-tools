@@ -9,29 +9,34 @@ This is a simple-ish command line tool that takes a sort of config file and scaf
 ### usage
 
 ```
-usage: make_add_on.py [-h] [--name NAME] [--dump] [--pack] [--link LINK] [addon_config_file]
+usage: make_add_on.py [-h] [--update] [--dump] [--pack] [--link LINK] [--verbose] name [addon_config_file]
 
 positional arguments:
-  addon_config_file
+  name                  The name of the addon
+  addon_config_file     The path to the config file
 
 optional arguments:
   -h, --help            show this help message and exit
-  --name NAME, -n NAME  The name of the addon
-  --dump, -d            Dump module definition as JSON and exit
+  --update, -u          Update files even if they exist
+  --dump, -d            Dump module definition and exit
   --pack, -p            Pack module into zip file
-  --link LINK, -l LINK  Link module folder to target folder (ideally the Blender add-ons folder
+  --link LINK, -l LINK  Link module folder to target folder (ideally the Blender add-ons folder)
+  --verbose, -v         Print more messages
 ```
 
 - __pack__ basically prepares your module for distribution
 - __link__ creates a link between your development folder and your destination folder - typically wherever blender looks for add-ons on your system
 
-### Caveats
+### Caveats and to-dos
 
 - None of this is tested on Windows
 - all of this works only from the folder your add-on will be created in
 - all of this will mercilessly clobber your files
 - creating shortcuts is unimplemented 
-- there is no way of adding comments into a config file
+- there is no way of adding code into an operator
+- there is no way of using other templates
+- there is no way of only generating parts of the code
+- there is no way of creating more complex panel layouts
 
 Some of these caveats are meant to disappear some day, some not.
 
@@ -50,6 +55,7 @@ As a rule:
 - everything that comes after a hash ("#") that isn't at the beginning of a line will become explanatory stuff (like property text text)
 - empty lines are ignored
 - things (like property type)are often case-sensitive
+- everything that comes after two percentage signs is a comment and will be ignored (think LISP)
 
 #### Properties
 
