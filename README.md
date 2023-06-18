@@ -31,7 +31,6 @@ optional arguments:
 
 - None of this is tested on Windows
 - all of this works only from the folder your add-on will be created in
-- all of this will mercilessly clobber your files
 - creating shortcuts is unimplemented 
 - there is no way of adding code into an operator
 - there is no way of using other templates
